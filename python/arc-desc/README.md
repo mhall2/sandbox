@@ -1,6 +1,5 @@
-The goal of this script is to create a .csv output that describes layers added to a MXD.
-the format of the report was pre specified.
+This script creates a .csv format output that includes information about layers used by an ESRI .mxd file.
 
 to run the script:
-python describe.py c:\your\mxd\here.mxd > c:\output\out.csv
+python describe.py c:\your\mxd\here.mxd c:\output\out.csv
 
