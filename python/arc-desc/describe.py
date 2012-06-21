@@ -1,83 +1,132 @@
-#Print out some layer information for a mxd file.
-#Need to print out name, source name etc.
-
+# Create a report with some layer information for a mxd file.
+# Need to print out name, source name etc.
 import sys, os, arcpy
 
 def parseMXD(mxd):
   dataFrames = arcpy.mapping.ListDataFrames(mxd)
   out = {}
   for df in dataFrames:
-    #print "dataframe =>" , df.name
+    # print "dataframe =>" , df.name
     layers = arcpy.mapping.ListLayers(mxd, "", df)
     goodLayers = []
     for x in range(len(layers)):
-      #discard group layers, it turns out that the 'leaf' layers will print  group1\group2\group3\feature etc.  that is nice....
+      # discard group layers, it turns out that the 'leaf' layers will print  group1\group2\group3\feature etc.  that is nice....
       if not(layers[x].isGroupLayer):
         goodLayers.append(layers[x])
     out[df.name] = goodLayers
   return out
   
 def main(args):
-  #exit if the user did not provide a file to look at.
-  if len(args) <= 1:
-    print "pass in the path to the .mxd file to report on."
+  # exit if the user did not provide the right number of args
+  if len(args) <> 3:
+    print "call the script passing in the following format ==> describe.py 'C:\your\mxd\here.mxd' 'c:\youroutput\here\out.csv'"
     sys.exit()
   fileName = args[1]
-  #print "REPORTING ON ====>" , fileName, "<===="
-  #open the mxd.
+  outfile = args[2]
+  print "REPORTING ON ====>" , fileName, "<===="
+  
+  # open the mxd.
   mxd = arcpy.mapping.MapDocument(fileName)
+   
+  # get the list of layers that we need to document. 
+  # the layers are lists that are indexed by dataframe name.
   listing = parseMXD(mxd)
   
-  #format the output to console for now alot of this stuff needs to be moved around.
-  #creates a csv style output that can be piped and opend in excel
-  print "DataFrame,Order,GroupPrefix,LayerName,FeatureClassName,DataType,LayerType,Source,Location"
-  for key in listing.keys():
-    for x in range(len(listing[key])):
-      lyr = listing[key][x]
-      #print lyr.longName, lyr.name
-      groupPrefix = ''
+  print "WRITING TO ====>", outfile , "<===="
+  file = open(outfile, 'w')
+  
+  # the output file will be .csv format containing the following information.
+  file.write( "DataFrame,Order,GroupPrefix,LayerName,FeatureClassName,DataType,LayerType,Source,Location\n")
+  for dataFrameKey in listing.keys():
+    
+    # 'x' is used as a counter for the report.
+    x=1 
+    for lyr in listing[dataFrameKey]:
+      # set some variables used in the report.
+      groupPrefix = ''  # any groups the layer is under seperated by '/'
+      datasetName = ''  # layers datasetName if it is supported.
+      serviceType = ''  # what kind of layer is this ShapeFile, SDE, etc.
+      location = ''  # path to the file, or some kind of connection info, maybe a URL for the layer
+      dspart = ''
+      shapetype ='unknown'
+      
+      # longName for layers in a group looks like group1/group2/layer 
+      # remove the '/layer' part.      
       if lyr.longName <> lyr.name:
-        # group name looks like group1/group2/layer slice the string to remove the '/layer' part
-        groupPrefix = lyr.longName[0:len(lyr.longName) - (len(lyr.name) + 1)]
-      datasetName = ''
+        groupPrefix = lyr.longName[:0-(len(lyr.name) + 1)]
+      
       if lyr.supports('datasetName'):
         datasetName = lyr.datasetName
-      #determine the service type.. SDE , WMS, ShapeFile etc.
-      serviceType = ''
-      location = ''
+      
+      # try to determine the service type for layers that support serviceProperties.
       if lyr.supports('serviceProperties'):
         serviceType = lyr.serviceProperties['ServiceType']
         if serviceType == 'SDE':
-          location = lyr.serviceProperties['Database'] +'@'+ lyr.serviceProperties['Server'] 
+          if len(lyr.serviceProperties['Database']) > 0:
+            location = lyr.serviceProperties['Database'] +'@'+ lyr.serviceProperties['Server']
+          else:
+            location = lyr.serviceProperties['Server'] + ':' + lyr.serviceProperties['Service']
         else:
           location = lyr.serviceProperties['URL']
-      dspart = ''
-      if lyr.supports('dataSource'):
-        dspart = lyr.dataSource
+      
+      # try to determine location for layers that support workspace path.
       ws = ''
       if lyr.supports('workspacePath'):
         ws = lyr.workspacePath
-      #determine if a shapefile/filegeodb/pgdb is used.
-      if len(dspart) > 4:
-        if dspart[-4:] == '.shp':
-          location = dspart
-          serviceType = 'ShapeFile'
-      if len(ws) > 4:
         if ws[-4:] == '.gdb':
           location = ws
           serviceType = 'FileGeoDatabase'
-      if len(ws) > 4:
         if ws[-4:] == '.mdb':
           location = ws
           serviceType = 'PersonalGeoDatabase'
       
-      shapeType = 'UNKNOWN!'
-      if len(dspart) > 0:    
-        desc = arcpy.Describe(dspart)
-        if hasattr(desc, 'shapeType'):
-          shapeType = desc.shapeType
-      print key + ','+ str(x+1) + ','+ groupPrefix + ','+ lyr.name + ',' + datasetName + ',' + shapeType + ',' + serviceType + ',' + '???' + ',' + location
-
+      # try to determine shape type and possibly location for layers that support dataSource
+      if lyr.supports('dataSource'):
+        dspart = lyr.dataSource
+        if dspart[-4:] == '.shp':
+          location = dspart
+          serviceType = 'ShapeFile'
+        # try to find shape Type for layer with valid datasource
+        try:
+          desc = arcpy.Describe(lyr.dataSource)
+          #if desc.hasattr('datasettype'):
+          #if desc.hasattr('dataType'):
+          if hasattr(desc, 'shapeType'):
+            shapeType = desc.shapeType
+        except:
+          print 'Failed to detect Shape, ?Broken DataSource for layer ', lyr.longName
+          shapeType = 'unknown(broken data source)'
+          
+      # try to find something to use as location if one hasn't been set yet    
+      if len(location) == 0:
+        if len(dspart) > 0:
+          location = dspart
+          serviceType = 'UNKNOWN_DS'
+        else:
+          if len(ws) > 0:
+            location = ws
+            serviceType = 'UNKNOWN_WS'
+      
+      
+      # report row structure
+      output = []
+      output.append(dataFrameKey)           # dataframe
+      output.append(str(x))    # counter
+      output.append(groupPrefix.replace(",", "_"))   # groupname group1/group2/etc.
+      output.append(lyr.name.replace(",", "_"))     # layer display name (TOC)
+      output.append(datasetName)   # layer data name
+      output.append(shapeType)     # type of shape, if layer is not broken
+      output.append(serviceType)   # shapefile, sde, etc.
+      output.append('???')         # placeholder to fit in target output format.
+      output.append(location)      # path to data
+  
+      file.write( ','.join(output) + '\n')
+      x = x + 1
+    
+    # clean up  
+    del mxd
+    file.close()
+    
 
 main(sys.argv)
 
